@@ -1,0 +1,209 @@
+# Check the connection status + Initial settings
+import sys
+import time
+import pandas as pd
+import numpy as np
+from PyQt5.QtWidgets import *
+import win32com.client
+import ctypes
+import datetime
+import os
+os.getcwd()
+os.chdir("C:\\Users\\Admin\\Documents")
+
+################################################################################################
+# PLUS 공통 OBJECT
+objCodeMgr = win32com.client.Dispatch('CpUtil.CpCodeMgr')
+objCpStatus = win32com.client.Dispatch('CpUtil.CpCybos')
+objCpTrade = win32com.client.Dispatch('CpTrade.CpTdUtil')
+CpTd5342 = win32com.client.Dispatch('CpTrade.CpTd5342')
+objStockChart = win32com.client.Dispatch("CpSysDib.StockChart")
+objMarketEye = win32com.client.Dispatch("CpSysDib.MarketEye")
+################################################################################################
+
+################################################################################################
+# Cybo Plus running check
+def InitPlusCheck():
+    # Admin-check
+    if ctypes.windll.shell32.IsUserAnAdmin():
+        print('Connection completed with admin authorisation')
+    else:
+        print('Error: Please run with admin authorisation')
+        return False
+
+    # Connection-check
+    if (objCpStatus.IsConnect == 0):
+        print("PLUS가 정상적으로 연결되지 않음. ")
+        return False
+    
+    # Initialisation
+    if (objCpTrade.TradeInit(0) != 0):
+        print("Failed")
+        return False
+
+    return "Completed"
+################################################################################################
+
+################################################################################################
+def Balance_Check():
+    acc = objCpTrade.AccountNumber[0]  # Account number
+    accFlag = objCpTrade.GoodsList(acc, 1)  # Choosing Equities
+
+    objRq = win32com.client.Dispatch("CpTrade.CpTd6033")
+    objRq.SetInputValue(0, acc)  # Account number
+    objRq.SetInputValue(1, accFlag[0])  # Equities
+    objRq.SetInputValue(2, 50)  # Requesting numbers (max 50)
+
+    objRq.BlockRequest()
+    cnt = objRq.GetHeaderValue(7)
+    data = pd.DataFrame([])
+    for i in range(cnt):
+        code = objRq.GetDataValue(12, i)
+        ac=objRq.GetDataValue(17, i)*objRq.GetDataValue(7, i)
+        abc = [[code,objRq.GetDataValue(0, i),objRq.GetDataValue(7, i),objRq.GetDataValue(17, i),objRq.GetDataValue(9, i),objRq.GetDataValue(11, i),ac,objRq.GetDataValue(4, i),objRq.GetDataValue(3, i),objRq.GetDataValue(5, i),objRq.GetDataValue(6, i)]]
+        data = data.append(pd.DataFrame(abc,columns = ['종목코드','종목명','잔고수량','장부가','평가금액','평가손익','매입금액','현재가','결제잔고수량','전일체결수량','금일체결수량']), ignore_index = True )
+    today = datetime.date.today().strftime("%B-%d-%Y")
+    data.to_excel("data_%s.xlsx" % today, sheet_name='sheet1')
+    return data
+################################################################################################
+
+if __name__ == "__main__":
+    balance = Balance_Check()
+    
+###############################################################################################
+# Getting all tickers
+instCpStockCode = win32com.client.Dispatch("CpUtil.CpStockCode")
+codeList = objCodeMgr.GetStockListByMarket(1) #거래소 (튜플)
+codeList2 = objCodeMgr.GetStockListByMarket(2) #코스닥 (튜플)
+print("거래소 종목코드 총 계수 : ", len(codeList))
+
+colnames = ['i', 'code', 'secondCode', 'stdPrice', 'name']
+KOSPI = pd.DataFrame([])
+for i, code in enumerate(codeList):
+    i = str(i)
+    secondCode = objCodeMgr.GetStockSectionKind(code)
+    name = objCodeMgr.CodeToName(code)
+    stdPrice = objCodeMgr.GetStockStdPrice(code)
+    listK = [[i, code, secondCode, stdPrice, name]]
+    KOSPI =  KOSPI.append(pd.DataFrame(listK, columns=colnames, index = [i]))
+    KOSPI = KOSPI.drop('i', axis=1)
+################################################################################################
+
+################################################################################################
+# 설명
+# CheckPrice : Last 10 days adj.price
+# CheckFundementals : Finantials 
+# CheckVolumn : Trading Volume
+# Last 10days Adj_Close Price
+def CheckPrice(objStockChart, code):
+    objStockChart.SetInputValue(0, code)  # 0 = Ticker code, ex) A003540
+    objStockChart.SetInputValue(1, ord('2'))  # Period =1, numbers =2 (ord라는 Function을 통해 아스키 코드로 변환)
+    objStockChart.SetInputValue(4, 10)  # 4 = numbers, 10 = actual data (10d ays)
+    objStockChart.SetInputValue(5, (0, 5, 6, 8, 9))  # type of data (adjusted price = 5)
+    objStockChart.SetInputValue(6, ord('D'))  # Daily data = D
+    objStockChart.SetInputValue(9, ord('1'))  # adj.price = 1
+
+    objStockChart.BlockRequest()
+
+    numData = objStockChart.GetHeaderValue(3)
+    numField = objStockChart.GetHeaderValue(1)
+
+    for i in range(numData):
+        for j in range(numField):
+            print(instStockChart.GetDataValue(j, i), end=" ")
+        print(" ")
+#PER, EPS, Latest Fiscal Quarter
+def CheckFundementals(objMarketEye, code):
+    objMarketEye.SetInputValue(0, (4, 67, 70, 111))
+    objMarketEye.SetInputValue(1,code)
+
+    # BlockRequest
+    objMarketEye.BlockRequest()
+
+    # GetData
+    print(objCodeMgr.CodeToName(code))
+    print("현재가: ", objMarketEye.GetDataValue(0, 0))
+    print("PER: ", objMarketEye.GetDataValue(1, 0))
+    print("EPS: ", objMarketEye.GetDataValue(2, 0))
+    print("최근분기년월: ", objMarketEye.GetDataValue(3, 0))
+
+    # Last 60days traded volume
+
+def CheckVolumn(objStockChart, code):
+    objStockChart.SetInputValue(0, code)
+    objStockChart.SetInputValue(1, ord('2'))
+    objStockChart.SetInputValue(4, 60)
+    objStockChart.SetInputValue(5, 8)
+    objStockChart.SetInputValue(6, ord('D'))
+    objStockChart.SetInputValue(9, ord('1'))
+
+    # BlockRequest
+    objStockChart.BlockRequest()
+
+    # GetData
+    volumes = []
+    numData = objStockChart.GetHeaderValue(3)
+    for i in range(numData):
+        volume = objStockChart.GetDataValue(0, i)
+        volumes.append(volume)
+
+    averageVolume = (sum(volumes) - volumes[0]) / (len(volumes) -1)
+    if(volumes[0] > averageVolume * 10):
+        return 1
+    else:
+        return 0
+################################################################################################
+
+################################################################################################
+class INDUSTRY_PER:
+    #Industry EPS & PER print
+    def industry_ratios():
+        industryCodeList = np.array(objCodeMgr.GetIndustryList())
+        industry_name = []
+        for i in industryCodeList:
+            industry_name.append((objCodeMgr.GetIndustryName(i)))
+        INDUSTRY = pd.DataFrame()
+        INDUSTRY = pd.DataFrame([industryCodeList, industry_name], index=['CODE', 'NAME']).T
+        try:
+            Name = input('Please type the industry name.')
+            industry_code = int(INDUSTRY.loc[INDUSTRY['NAME'] == Name]['CODE'])
+            tarketCodeList = objCodeMgr.GetGroupCodeList(industry_code)
+            # Get PER
+            objMarketEye.SetInputValue(0, [67, 70])
+            objMarketEye.SetInputValue(1, tarketCodeList)
+
+            # BlockRequest
+            objMarketEye.BlockRequest()
+
+            # GetHeaderValue
+            numStock = objMarketEye.GetHeaderValue(2)
+
+            # GetData
+            sumPer = 0
+            for i in range(numStock):
+                sumPer += objMarketEye.GetDataValue(0, i)
+
+            sumEPS = 0
+            for i in range(numStock):
+                sumEPS += objMarketEye.GetDataValue(1, i)
+
+            print(Name)
+            print("Average PER: ", sumPer / numStock)
+            print("Average EPS: ", sumEPS / numStock)
+        except TypeError:
+            return "Incorrect Inudstry name, You typed :", Name
+################################################################################################
+
+################################################################################################
+# This will search the stocks with recent volume hype
+if __name__ == "__main__":
+    buyList = []
+    try:
+        for code in codeList:
+            if CheckVolumn(objStockChart, code) == 1:
+                buyList.append(code)
+                print(objCodeMgr.CodeToName(code))
+        time.sleep(0.1)
+    except ZeroDivisionError:
+        print(objCodeMgr.CodeToName(code),"Check if it went out IPO recently or maybe not")
+        pass
